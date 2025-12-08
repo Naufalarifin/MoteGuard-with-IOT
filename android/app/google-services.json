@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "486353586440",
+    "project_id": "motoguard-586d7",
+    "storage_bucket": "motoguard-586d7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:486353586440:android:076ee3be669279f256c4bd",
+        "android_client_info": {
+          "package_name": "com.example.moteguard_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "486353586440-54n9l8d6m0nn5ejku2qtj62d8tnriua3.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.moteguard_app",
+            "certificate_hash": "59834b2dab5e20c39061f2eacad4877e36132d03"
+          }
+        },
+        {
+          "client_id": "486353586440-0dc6n4jvuen9m2h7io16ilvieojejo2i.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDED5r5odmLtNUDTbRUIxmr-DpEwSi428A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "486353586440-0dc6n4jvuen9m2h7io16ilvieojejo2i.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
