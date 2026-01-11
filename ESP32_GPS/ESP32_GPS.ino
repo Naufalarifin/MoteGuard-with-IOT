@@ -18,7 +18,6 @@
 
 // Geofencing parameters
 #define DEFAULT_SAFE_ZONE_RADIUS 15.0  // Default safezone radius (meter)
-#define SPEED_THRESHOLD 7.0
 
 // Safe zone radius yang bisa diubah dari aplikasi (default 15.0 meter)
 double safeZoneRadius = DEFAULT_SAFE_ZONE_RADIUS;
@@ -36,17 +35,12 @@ unsigned long lastMqttErrorLog = 0;
 const unsigned long MQTT_ERROR_LOG_INTERVAL = 30000UL;
 unsigned long lastWifiErrorLog = 0;
 const unsigned long WIFI_ERROR_LOG_INTERVAL = 30000UL;
-bool lastMqttConnectionState = false;
 
 // Publish intervals
-const unsigned long SAFE_PUBLISH_INTERVAL = 2000UL;        // 1 menit saat di dalam safe zone
-const unsigned long PUBLISH_INTERVAL_OUTSIDE = 2000UL;     // 2 detik saat di luar safe zone
+const unsigned long SAFE_PUBLISH_INTERVAL = 60000UL;
+const unsigned long PUBLISH_INTERVAL_OUTSIDE = 2000UL;
 
 // Vibration sensor timing
-unsigned long lastVibrationCheck = 0;
-const unsigned long VIBRATION_CHECK_INTERVAL = 100UL;
-unsigned long lastVibrationPublish = 0;
-const unsigned long VIBRATION_PUBLISH_INTERVAL = 1000UL;
 bool lastVibrationState = false;
 
 // Vibration detection - deteksi perubahan setiap 2 detik
@@ -54,7 +48,7 @@ unsigned long vibrationPeriodStart = 0;
 unsigned int vibrationPeriodCount = 0;
 bool vibrationChangedInPeriod = false;
 const unsigned long VIBRATION_PERIOD_INTERVAL = 2000UL;
-const unsigned int VIBRATION_PERIOD_MIN_COUNT = 5;
+const unsigned int VIBRATION_PERIOD_MIN_COUNT = 3;
 bool vibrationDetectedForMQTT = false;
 
 WiFiClient espClient;
@@ -84,8 +78,6 @@ struct GeoPoint {
 GeoPoint centerPoint = {0.0, 0.0, false};
 bool isOutsideSafeZone = false;
 bool alertSent = false;
-bool relayState = false;
-bool waitingForSpeed = false;
 
 unsigned long lastGPSCheck = 0;
 unsigned long lastPublish = 0;
@@ -101,21 +93,19 @@ bool wakeFromDeepSleep = false;
 unsigned long lastSleepCheck = 0;
 const unsigned long SLEEP_CHECK_INTERVAL = 5000UL;
 
-void controlRelay(bool state) {
-  relayState = state;
-  
+void controlRelay(bool state) {  
   // Untuk relay Active LOW (paling umum):
   // state = true (motor dikunci) → relay AKTIF → pin LOW
   // state = false (motor normal) → relay OFF → pin HIGH
   digitalWrite(RELAY_PIN, state ? LOW : HIGH);
   
-  String status = state ? "MOTOR DIKUNCI" : "MOTOR NORMAL";
+  String status = state ? "MOTOR MATI" : "MOTOR HIDUP";
   Serial.print("Relay: ");
   Serial.println(status);
   Serial.print("Pin State: ");
   Serial.println(state ? "LOW (Active)" : "HIGH (Inactive)");
   
-  String relayMsg = state ? "ON,Listrik_Terputus" : "OFF,Listrik_Normal";
+  String relayMsg = state ? "OFF,Motor_Mati" : "ON,Motor_Hidup";
   publishMessageIfConnected(topicRelay, relayMsg);
 }
 
@@ -281,13 +271,12 @@ void acknowledgeInitialCommand(const String& commandLabel) {
   centerPoint.isSet = false;
   isOutsideSafeZone = false;
   alertSent = false;
-  waitingForSpeed = false;
   Serial.println("[AUTH] Perintah awal dari aplikasi diterima");
   publishStatusMessage("AUTHORIZED");
 }
 
 void ensureAuthorizationHeartbeat() {
-  if (!awaitingInitialCommand || !client.connected()) {
+  if (! || !client.connected()) {
     return;
   }
   unsigned long now = millis();
@@ -299,7 +288,7 @@ void ensureAuthorizationHeartbeat() {
 
 void enterOfflineMode(const String& reason) {
   if (offlineModeActive) {
-    return;
+    return;awaitingInitialCommand
   }
   offlineModeActive = true;
   Serial.print("[OFFLINE MODE] ");
@@ -328,21 +317,18 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if (String(topic) == topicControl) {
     acknowledgeInitialCommand(message);
     if (message == "RELAY_OFF") {
-      Serial.println(">> MANUAL: Motor Dikunci");
+      Serial.println(">> MANUAL: Motor Mati");
       manualControl = true;
       controlRelay(true);
-      waitingForSpeed = false;
       
     } else if (message == "RELAY_ON") {
-      Serial.println(">> MANUAL: Motor Normal");
+      Serial.println(">> MANUAL: Motor Hidup");
       manualControl = true;
       controlRelay(false);
-      waitingForSpeed = false;
       
     } else if (message == "AUTO") {
       Serial.println(">> AUTO Mode");
       manualControl = false;
-      waitingForSpeed = false;
       
     } else if (message == "OFF") {
       Serial.println(">> Sleep Mode - Preparing for periodic sleep...");
@@ -350,7 +336,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
       centerPoint.isSet = false;
       isOutsideSafeZone = false;
       manualControl = false;
-      waitingForSpeed = false;
       controlRelay(false);
       
       publishMessageIfConnected(topicData, "SLEEP");
@@ -368,7 +353,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
       centerPoint.isSet = false;
       isOutsideSafeZone = false;
       manualControl = false;
-      waitingForSpeed = false;
       controlRelay(false);
       
       if (!client.connected()) {
@@ -383,14 +367,13 @@ void callback(char* topic, byte* payload, unsigned int length) {
       isOutsideSafeZone = false;
       alertSent = false;
       manualControl = false;
-      waitingForSpeed = false;
       controlRelay(false);
       publishMessageIfConnected(topicData, "RESET");
     }
   } else if (String(topic) == topicSafeZone) {
     double newRadius = message.toDouble();
     if (newRadius > 0 && newRadius <= 1000.0) {
-      safeZoneRadius = newRadius;
+      safeZoneRadius = newRadius + 6.59;
       Serial.print(">> Safe Zone Radius updated: ");
       Serial.print(safeZoneRadius);
       Serial.println(" meter");
@@ -425,7 +408,6 @@ bool reconnect(bool allowLongWait) {
         Serial.println("[MQTT] Connected!");
       }
       exitOfflineModeIfNeeded();
-      lastMqttConnectionState = true;
       client.subscribe(topicControl);
       client.subscribe(topicSafeZone);
       
@@ -451,7 +433,6 @@ bool reconnect(bool allowLongWait) {
   if (shouldLog && !client.connected()) {
     Serial.println("[MQTT] Connection could not be established (mode offline)");
   }
-  lastMqttConnectionState = client.connected();
   
   if (!allowLongWait && !awaitingInitialCommand) {
     enterOfflineMode("MQTT unreachable");
@@ -476,14 +457,6 @@ void setup() {
     bootSessionId = (uint32_t)(millis() + random(1, 1000));
   }
   
-  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-  if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
-    wakeFromDeepSleep = true;
-    Serial.println("\n=== WAKE FROM DEEP SLEEP ===");
-  } else {
-    Serial.println("\n=== NORMAL STARTUP ===");
-  }
-  
   pinMode(RELAY_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, HIGH);
   
@@ -492,23 +465,22 @@ void setup() {
   Serial.print("Vibration Pin: GPIO ");
   Serial.println(VIBRATION_PIN);
   Serial.println("Sensor ready!");
-  Serial.println("MQTT: Akan kirim jika getaran >= 10 detik");
+  Serial.println("MQTT: Akan kirim jika getaran >= 6 detik");
   Serial.println("Serial Monitor: Tampilkan setiap getaran");
   Serial.println();
   
-  Serial.println("=== ESP32 GPS Geofencing + Speed Lock + Vibration Sensor ===");
+  Serial.println("=== ESP32 GPS Geofencing + Vibration Sensor ===");
   Serial.print("Safe Zone: ");
   Serial.print(safeZoneRadius);
   Serial.println(" meter");
-  Serial.print("Speed Threshold: ");
-  Serial.print(SPEED_THRESHOLD);
-  Serial.println(" km/h");
   Serial.print("Relay Pin: GPIO ");
   Serial.println(RELAY_PIN);
   Serial.print("Vibration Pin: GPIO ");
   Serial.println(VIBRATION_PIN);
   Serial.println("=========================================");
-  Serial.println("LOGIKA: Relay OFF -> Speed <=7km/h -> Motor Lock");
+  Serial.println("LOGIKA SEDERHANA:");
+  Serial.println("  - DALAM ZONA  -> Relay ON  (Motor Hidup)");
+  Serial.println("  - KELUAR ZONA -> Relay OFF (Motor Mati)");
   Serial.println("VIBRATION: Serial Monitor = setiap getaran");
   Serial.println("VIBRATION: MQTT = hanya jika >= 10 detik");
   Serial.println("=========================================\n");
@@ -543,10 +515,6 @@ void loop() {
     exitOfflineModeIfNeeded();
   }
   
-  bool currentMqttState = mqttConnected;
-  if (currentMqttState != lastMqttConnectionState) {
-    lastMqttConnectionState = currentMqttState;
-  }
   
   if (mqttConnected) {
     client.loop();
@@ -642,7 +610,7 @@ void loop() {
         Serial.println("\n");
         
         if (!manualControl) {
-          controlRelay(false);
+          controlRelay(false);  // Motor hidup saat pertama kali (dalam zona)
         }
         
         lastPublish = currentMillis;
@@ -669,49 +637,31 @@ void loop() {
         unsigned long publishInterval = inSafeZone ? SAFE_PUBLISH_INTERVAL : PUBLISH_INTERVAL_OUTSIDE;
         
         if (!manualControl) {
+          // ========================================
+          // LOGIKA SEDERHANA: KELUAR ZONA = RELAY OFF
+          // ========================================
           if (!inSafeZone) {
+            // Keluar dari safe zone
             if (!isOutsideSafeZone) {
               isOutsideSafeZone = true;
               alertSent = false;
               
               Serial.println("\n!!! KELUAR ZONA AMAN !!!");
-              Serial.println(">>> STEP 1: Memutus Relay <<<");
+              Serial.println(">>> RELAY OFF - MOTOR MATI <<<\n");
               
-              controlRelay(true);
-              waitingForSpeed = true;
-              
-              Serial.println(">>> Menunggu kecepatan <= 7 km/h <<<\n");
+              controlRelay(true);  // Relay OFF = motor mati
             }
             
-            if (waitingForSpeed && relayState == true) {
-              if (currentSpeed <= SPEED_THRESHOLD) {
-                Serial.println("\n>>> KECEPATAN CUKUP RENDAH <<<");
-                Serial.print("Kecepatan: ");
-                Serial.print(currentSpeed, 2);
-                Serial.println(" km/h");
-                Serial.println(">>> MOTOR TERKUNCI (Relay OFF) <<<");
-                
-                waitingForSpeed = false;
-                
-                Serial.println(">>> PENGUNCIAN SELESAI <<<\n");
-              } else {
-                Serial.print("Menunggu... Speed: ");
-                Serial.print(currentSpeed, 2);
-                Serial.println(" km/h");
-              }
-            }
-            
+            // Kirim alert pertama kali keluar zona
             if (!alertSent) {
-              String motorStatus = (!waitingForSpeed && relayState == true) ? "LOCKED" : "WAITING_SPEED";
-              
               String alertMsg = "ALERT," + 
                                String(currentLat, 6) + "," + 
                                String(currentLng, 6) + "," + 
                                String(currentAlt, 2) + "," + 
                                String(currentSpeed, 2) + "," + 
                                String(satCount) + "," + 
-                               String(distance, 2) + "," + 
-                               motorStatus;
+                               String(distance, 2) + "," +
+                               "OUTSIDE_ZONE";
               publishMessageIfConnected(topicAlert, alertMsg);
               Serial.println("Alert sent!");
               alertSent = true;
@@ -719,6 +669,7 @@ void loop() {
               lastPublish = currentMillis;
             }
             
+            // Update berkala saat di luar zona
             if (currentMillis - lastPublish >= publishInterval) {
               lastPublish = currentMillis;
               String msg = "OUTSIDE," + 
@@ -731,23 +682,20 @@ void loop() {
               publishMessageIfConnected(topicData, msg);
             }
             
-            String statusMsg = (!waitingForSpeed && relayState == true) ? "LUAR ZONA (Relay OFF - Motor Lock)" : 
-                                            "LUAR ZONA (Relay OFF, Waiting Speed)";
-            Serial.print("Status: ");
-            Serial.println(statusMsg);
+            Serial.println("Status: LUAR ZONA (Motor Mati)");
             
           } else {
+            // ========================================
+            // MASUK ZONA = RELAY ON
+            // ========================================
             if (isOutsideSafeZone) {
               Serial.println("\n*** KEMBALI KE ZONA AMAN ***");
-              Serial.println(">>> STEP 1: Menyambung Relay <<<");
+              Serial.println(">>> RELAY ON - MOTOR HIDUP <<<\n");
               
               isOutsideSafeZone = false;
               alertSent = false;
-              waitingForSpeed = false;
               
-              controlRelay(false);
-              
-              Serial.println(">>> MOTOR NORMAL KEMBALI <<<\n");
+              controlRelay(false);  // Relay ON = motor hidup
               
               lastPublish = currentMillis;
               String msg = "SAFE," + 
@@ -760,8 +708,9 @@ void loop() {
               publishMessageIfConnected(topicData, msg);
             }
             
-            Serial.println("Status: DALAM ZONA (Motor Normal)");
+            Serial.println("Status: DALAM ZONA (Motor Hidup)");
             
+            // Update berkala saat di dalam zona
             if (currentMillis - lastPublish >= publishInterval) {
               lastPublish = currentMillis;
               String msg = "NORMAL," + 

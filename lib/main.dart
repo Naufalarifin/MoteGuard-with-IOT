@@ -170,7 +170,6 @@ class _MqttHomePageState extends State<MqttHomePage> {
   String? safeZoneRadius;
   String geofenceStatus = "UNKNOWN";
   double _currentSafeZoneRadius = 15.0; // Default safezone radius (meter)
-  bool _isBadWeather = false; // Default cuaca baik (false = baik, true = buruk)
 
   // Vibration sensor data
   String? lastVibrationTime;
@@ -210,7 +209,6 @@ class _MqttHomePageState extends State<MqttHomePage> {
     _initializeNotifications();
     _loadEsp32Status(); // Load status terakhir ESP32
     _loadSafeZoneRadius(); // Load safezone radius terakhir
-    _loadWeatherPreference(); // Load preferensi cuaca
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupAndConnect();
     });
@@ -376,7 +374,7 @@ class _MqttHomePageState extends State<MqttHomePage> {
     // Action button untuk stop alert notification
     const stopAction = AndroidNotificationAction(
       'STOP_ALERT',
-      'Matikan Alert',
+      'Stop Alert',
       titleColor: Color(0xFFFF0000),
       cancelNotification: true, // Cancel notification saat action di-tap
     );
@@ -412,10 +410,10 @@ class _MqttHomePageState extends State<MqttHomePage> {
       ongoing: false, // Bisa di-swipe
       autoCancel: false, // Jangan auto cancel agar bisa berulang
       ticker:
-          '🚨 GPS Alert - Device keluar dari safe zone!', // Ticker text yang muncul di status bar
+          '🚨 GPS Alert - Device has left the safe zone!', // Ticker text yang muncul di status bar
       actions: [stopAction], // Tambahkan action button untuk stop alert
       styleInformation: BigTextStyleInformation(
-        'Device telah keluar dari safe zone!\nJarak: ${distance ?? "?"} m | Radius: ${radius ?? "?"} m',
+        'Device has left the safe zone!\nDistance: ${distance ?? "?"} m | Radius: ${radius ?? "?"} m',
         contentTitle: '🚨 GPS Alert - Zone Breach!',
       ),
     );
@@ -436,7 +434,7 @@ class _MqttHomePageState extends State<MqttHomePage> {
     await _notifications.show(
       1,
       '🚨 GPS Alert - Zone Breach!',
-      'Device telah keluar dari safe zone!\nJarak: ${distance ?? "?"} m | Radius: ${radius ?? "?"} m',
+      'Device has left the safe zone!\nDistance: ${distance ?? "?"} m | Radius: ${radius ?? "?"} m',
       notificationDetails,
       payload: 'gps_alert_channel',
     );
@@ -592,7 +590,7 @@ class _MqttHomePageState extends State<MqttHomePage> {
     await _notifications.show(
       2,
       '⚠️ Vibration Detected!',
-      'Getaran terdeteksi pada motor!\nLokasi: ${location ?? "GPS belum tersedia"}',
+      'Vibration detected on the motorcycle!\nLocation: ${location ?? "GPS not available"}',
       notificationDetails,
       payload: 'vibration_alert_channel',
     );
@@ -661,7 +659,7 @@ class _MqttHomePageState extends State<MqttHomePage> {
         'safezone_radius',
       ); // double atau null
 
-      if (savedRadius != null && savedRadius > 0 && savedRadius <= 1000) {
+      if (savedRadius != null && savedRadius >= 5.0 && savedRadius <= 80.0) {
         _currentSafeZoneRadius = savedRadius;
         if (mounted) {
           setState(() {
@@ -703,30 +701,6 @@ class _MqttHomePageState extends State<MqttHomePage> {
     }
   }
 
-  // Load preferensi cuaca dari SharedPreferences
-  Future<void> _loadWeatherPreference() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      _isBadWeather = prefs.getBool('weather_bad') ?? false; // Default cuaca baik
-      print('Loaded weather preference: ${_isBadWeather ? "Buruk" : "Baik"}');
-    } catch (e) {
-      print('Error loading weather preference: $e');
-      _isBadWeather = false; // Default cuaca baik
-    }
-  }
-
-  // Save preferensi cuaca ke SharedPreferences
-  Future<void> _saveWeatherPreference(bool isBad) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('weather_bad', isBad);
-      _isBadWeather = isBad;
-      print('Saved weather preference: ${isBad ? "Buruk" : "Baik"}');
-    } catch (e) {
-      print('Error saving weather preference: $e');
-    }
-  }
-
   // Kirim safezone radius ke ESP32
   void _sendSafeZoneRadius(double radius) {
     if (client == null ||
@@ -735,21 +709,14 @@ class _MqttHomePageState extends State<MqttHomePage> {
       return;
     }
     try {
-      // Jika cuaca buruk, tambahkan 20 meter
-      double effectiveRadius = radius;
-      if (_isBadWeather) {
-        effectiveRadius = radius + 20.0;
-        print('Cuaca buruk: radius ditambahkan 20m (${radius}m + 20m = ${effectiveRadius}m)');
-      }
-      
       final builder = MqttClientPayloadBuilder();
-      builder.addString(effectiveRadius.toStringAsFixed(1)); // Format: "15.0" atau "35.0"
+      builder.addString(radius.toStringAsFixed(1)); // Format: "15.0"
       client!.publishMessage(
         "gps/safezone",
         MqttQos.atLeastOnce,
         builder.payload!,
       );
-      print('Safezone radius sent to ESP32: $effectiveRadius m (input: $radius m, cuaca: ${_isBadWeather ? "Buruk" : "Baik"})');
+      print('Safezone radius sent to ESP32: $radius m');
     } catch (e) {
       print('Failed to send safezone radius: $e');
     }
@@ -825,288 +792,112 @@ class _MqttHomePageState extends State<MqttHomePage> {
     final TextEditingController radiusController = TextEditingController(
       text: _currentSafeZoneRadius.toStringAsFixed(1),
     );
-    bool tempIsBadWeather = _isBadWeather; // Temporary state untuk dialog
 
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
-          title: Row(
-            children: const [
-              Icon(Icons.location_on, color: AppColors.primary, size: 28),
-              SizedBox(width: 10),
+      barrierDismissible: true,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+        title: Row(
+          children: const [
+            Icon(Icons.location_on, color: AppColors.primary, size: 28),
+            SizedBox(width: 10),
+            Text(
+              'Safe Zone Settings',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textDark,
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
               Text(
-                'Safe Zone Settings',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textDark,
+                'Set safe zone radius (meters)',
+                style: TextStyle(fontSize: 14, color: AppColors.textDark),
+              ),
+              SizedBox(height: 12),
+              TextField(
+                controller: radiusController,
+                keyboardType: TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: InputDecoration(
+                  labelText: 'Radius (meters)',
+                  hintText: 'Example: 15.0',
+                  prefixIcon: Icon(
+                    Icons.radio_button_unchecked,
+                    color: AppColors.secondary,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: AppColors.primary),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(
+                      color: AppColors.primary,
+                      width: 2,
+                    ),
+                  ),
+                  filled: true,
+                  fillColor: AppColors.softBlue.withOpacity(0.3),
                 ),
               ),
-            ],
-          ),
-          content: LayoutBuilder(
-            builder: (context, constraints) => SingleChildScrollView(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minWidth: constraints.maxWidth),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              SizedBox(height: 8),
+              Text(
+                'Radius provides a distance tolerance of 6.59 meters',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textDark.withOpacity(0.7),
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+              SizedBox(height: 12),
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.softBlue.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.secondary.withOpacity(0.3),
+                  ),
+                ),
+                child: Row(
                   children: [
-                    const Text(
-                      'Pilih Kondisi Cuaca',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textDark,
+                    Icon(
+                      Icons.info_outline,
+                      color: AppColors.secondary,
+                      size: 20,
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Range: 5 - 80 meters\nDefault: 15.0 meters',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textDark,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () {
-                              setDialogState(() {
-                                tempIsBadWeather = false;
-                              });
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 16,
-                                horizontal: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                color: tempIsBadWeather
-                                    ? AppColors.softBlue.withOpacity(0.2)
-                                    : AppColors.primary.withOpacity(0.15),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: tempIsBadWeather
-                                      ? AppColors.primary.withOpacity(0.3)
-                                      : AppColors.primary,
-                                  width: tempIsBadWeather ? 1.5 : 2.5,
-                                ),
-                              ),
-                              child: Column(
-                                children: [
-                                  Icon(
-                                    Icons.wb_sunny,
-                                    color: tempIsBadWeather
-                                        ? AppColors.textDark.withOpacity(0.5)
-                                        : AppColors.primary,
-                                    size: 32,
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Cuaca Baik',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: tempIsBadWeather
-                                          ? FontWeight.normal
-                                          : FontWeight.bold,
-                                      color: tempIsBadWeather
-                                          ? AppColors.textDark.withOpacity(0.6)
-                                          : AppColors.primary,
-                                    ),
-                                  ),
-                                  if (!tempIsBadWeather) ...[
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Radius normal',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: AppColors.textDark.withOpacity(0.7),
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () {
-                              setDialogState(() {
-                                tempIsBadWeather = true;
-                              });
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 16,
-                                horizontal: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                color: tempIsBadWeather
-                                    ? AppColors.danger.withOpacity(0.15)
-                                    : AppColors.softBlue.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: tempIsBadWeather
-                                      ? AppColors.danger
-                                      : AppColors.primary.withOpacity(0.3),
-                                  width: tempIsBadWeather ? 2.5 : 1.5,
-                                ),
-                              ),
-                              child: Column(
-                                children: [
-                                  Icon(
-                                    Icons.cloud_queue,
-                                    color: tempIsBadWeather
-                                        ? AppColors.danger
-                                        : AppColors.textDark.withOpacity(0.5),
-                                    size: 32,
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Cuaca Buruk',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: tempIsBadWeather
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
-                                      color: tempIsBadWeather
-                                          ? AppColors.danger
-                                          : AppColors.textDark.withOpacity(0.6),
-                                    ),
-                                  ),
-                                  if (tempIsBadWeather) ...[
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '+20m otomatis',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: AppColors.danger.withOpacity(0.8),
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    const Text(
-                      'Atur radius safe zone (meter)',
-                      style: TextStyle(fontSize: 14, color: AppColors.textDark),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: radiusController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: InputDecoration(
-                        labelText: 'Radius (meter)',
-                        hintText: 'Contoh: 15.0',
-                        prefixIcon: const Icon(
-                          Icons.radio_button_unchecked,
-                          color: AppColors.secondary,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: AppColors.primary),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(
-                            color: AppColors.primary,
-                            width: 2,
-                          ),
-                        ),
-                        filled: true,
-                        fillColor: AppColors.softBlue.withOpacity(0.3),
-                      ),
-                    ),
-                    if (tempIsBadWeather) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: AppColors.danger.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: AppColors.danger.withOpacity(0.3),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.info_outline,
-                              color: AppColors.danger,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: ValueListenableBuilder<TextEditingValue>(
-                                valueListenable: radiusController,
-                                builder: (context, value, child) {
-                                  final input = value.text.trim();
-                                  final baseRadius =
-                                      double.tryParse(input) ?? _currentSafeZoneRadius;
-                                  final effectiveRadius = baseRadius + 20.0;
-                                  return Text(
-                                    'Radius efektif: ${baseRadius.toStringAsFixed(1)}m + 20m = ${effectiveRadius.toStringAsFixed(1)}m',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: AppColors.danger,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.softBlue.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: AppColors.secondary.withOpacity(0.3),
-                        ),
-                      ),
-                      child: Row(
-                        children: const [
-                          Icon(
-                            Icons.info_outline,
-                            color: AppColors.secondary,
-                            size: 20,
-                          ),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Range: 1 - 1000 meter\nDefault: 15.0 meter',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: AppColors.textDark,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 4),
                   ],
                 ),
               ),
-            ),
+              SizedBox(height: 4),
+            ],
           ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text(
-              'Batal',
+              'Cancel',
               style: TextStyle(color: AppColors.textDark),
             ),
           ),
@@ -1115,13 +906,13 @@ class _MqttHomePageState extends State<MqttHomePage> {
               final input = radiusController.text.trim();
               final newRadius = double.tryParse(input);
 
-              if (newRadius == null || newRadius < 1.0 || newRadius > 1000.0) {
+              if (newRadius == null || newRadius < 5.0 || newRadius > 80.0) {
                 // Show error
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: const Text(
-                        'Radius harus antara 1 - 1000 meter!',
+                        'Radius must be between 5 - 80 meters!',
                       ),
                       backgroundColor: AppColors.danger,
                       behavior: SnackBarBehavior.floating,
@@ -1134,9 +925,6 @@ class _MqttHomePageState extends State<MqttHomePage> {
                 return;
               }
 
-              // Simpan preferensi cuaca
-              await _saveWeatherPreference(tempIsBadWeather);
-              
               // Simpan dan kirim ke ESP32
               await _saveSafeZoneRadius(newRadius);
               _sendSafeZoneRadius(newRadius);
@@ -1149,13 +937,10 @@ class _MqttHomePageState extends State<MqttHomePage> {
 
               if (context.mounted) {
                 Navigator.pop(context);
-                final effectiveRadius = tempIsBadWeather ? newRadius + 20.0 : newRadius;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(
-                      tempIsBadWeather
-                          ? 'Safe Zone: ${newRadius.toStringAsFixed(1)}m + 20m = ${effectiveRadius.toStringAsFixed(1)}m (Cuaca Buruk)'
-                          : 'Safe Zone Radius: ${newRadius.toStringAsFixed(1)}m (Cuaca Baik)',
+                      'Safe Zone Radius: ${newRadius.toStringAsFixed(1)}m',
                     ),
                     backgroundColor: AppColors.success,
                     behavior: SnackBarBehavior.floating,
@@ -1175,10 +960,9 @@ class _MqttHomePageState extends State<MqttHomePage> {
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            child: const Text('Simpan'),
+            child: const Text('Save'),
           ),
         ],
-      ),
       ),
     );
   }
@@ -1919,18 +1703,18 @@ class _MqttHomePageState extends State<MqttHomePage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '⚠️ Getaran terdeteksi pada motor!',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            const Text(
+              '⚠️ Vibration detected on the motorcycle!',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             const SizedBox(height: 12),
             if (vibrationLocation != null) ...[
-              Text('Lokasi: $vibrationLocation'),
+              Text('Location: $vibrationLocation'),
               const SizedBox(height: 8),
             ],
-            Text('Waktu: ${lastVibrationTime ?? "?"}'),
+            Text('Time: ${lastVibrationTime ?? "?"}'),
             const SizedBox(height: 8),
-            Text('Total getaran: $vibrationCount'),
+            Text('Total vibrations: $vibrationCount'),
           ],
         ),
         actions: [
@@ -3251,3 +3035,7 @@ class _MqttHomePageState extends State<MqttHomePage> {
     );
   }
 }
+
+
+
+
